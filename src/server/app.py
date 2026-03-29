@@ -80,7 +80,12 @@ app.add_middleware(
 )
 
 # Load examples into Milvus if configured
-load_examples()
+try:
+    load_examples()
+    logger.info("Milvus example loading completed successfully")
+except Exception as e:
+    logger.warning(f"Milvus example loading failed (non-fatal): {e}")
+    logger.warning("Continuing without Milvus examples - RAG features may be limited")
 
 # Initialize research database
 try:
