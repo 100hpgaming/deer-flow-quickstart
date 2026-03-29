@@ -13,7 +13,7 @@
     "lint": "next lint",
     "lint:fix": "next lint --fix",
     "preview": "next build && next start",
-    "start": "start": "node .next/standalone/server.js"
+    "start": "node .next/standalone/server.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
