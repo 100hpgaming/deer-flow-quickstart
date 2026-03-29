@@ -10,6 +10,7 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel, Field
 from langchain_core.messages import AIMessageChunk, BaseMessage, ToolMessage
 from langgraph.types import Command
 from langgraph.store.memory import InMemoryStore
@@ -52,6 +53,7 @@ from src.server.research_api import router as research_router
 from src.tools import VolcengineTTS
 from src.graph.checkpoint import chat_stream_message
 from src.utils.json_utils import sanitize_args
+from src.workflow import run_agent_workflow_async
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +68,10 @@ app = FastAPI(
 # Add CORS middleware
 # It's recommended to load the allowed origins from an environment variable
 # for better security and flexibility across different environments.
-allowed_origins_str = get_str_env("ALLOWED_ORIGINS", "http://localhost:3000")
+allowed_origins_str = get_str_env(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,https://python-backend-production-2b01.up.railway.app",
+)
 allowed_origins = [origin.strip() for origin in allowed_origins_str.split(",")]
 
 logger.info(f"Allowed origins: {allowed_origins}")
@@ -100,6 +105,74 @@ except Exception as e:
 
 in_memory_store = InMemoryStore()
 graph = build_graph_with_memory()
+
+
+@app.get("/")
+async def root():
+    """Root health check endpoint."""
+    return {"status": "ok", "service": "DeerFlow API", "version": "0.1.0"}
+
+
+@app.get("/api/health")
+async def api_health():
+    """API health check endpoint."""
+    return {"status": "ok", "service": "DeerFlow API", "version": "0.1.0"}
+
+
+class SimpleChatRequest(BaseModel):
+    message: str = Field(..., description="The user's message")
+    max_plan_iterations: int = Field(1, description="Maximum number of plan iterations")
+    max_step_num: int = Field(3, description="Maximum number of steps in a plan")
+    enable_background_investigation: bool = Field(
+        True, description="Whether to perform background investigation before planning"
+    )
+
+
+class SimpleChatResponse(BaseModel):
+    response: str = Field(..., description="The assistant's response")
+    status: str = Field("ok", description="Response status")
+
+
+@app.post("/api/chat", response_model=SimpleChatResponse)
+async def chat(request: SimpleChatRequest):
+    """Simple chat endpoint that accepts a message and returns a response using the DeerFlow agent workflow."""
+    if not request.message or not request.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    try:
+        # Capture the final output by collecting streamed messages
+        collected_output = []
+
+        graph_instance = build_graph_with_memory()
+        initial_state = {
+            "messages": [{"role": "user", "content": request.message}],
+            "auto_accepted_plan": True,
+            "enable_background_investigation": request.enable_background_investigation,
+        }
+        config = {
+            "configurable": {
+                "thread_id": str(uuid4()),
+                "max_plan_iterations": request.max_plan_iterations,
+                "max_step_num": request.max_step_num,
+                "mcp_settings": {},
+            },
+            "recursion_limit": get_recursion_limit(),
+        }
+
+        async for s in graph_instance.astream(
+            input=initial_state, config=config, stream_mode="values"
+        ):
+            if isinstance(s, dict) and "messages" in s:
+                message = s["messages"][-1]
+                if hasattr(message, "content") and message.content:
+                    collected_output.append(str(message.content))
+
+        final_response = collected_output[-1] if collected_output else "No response generated."
+        return SimpleChatResponse(response=final_response, status="ok")
+
+    except Exception as e:
+        logger.exception(f"Error in /api/chat endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR_DETAIL)
 
 
 @app.post("/api/chat/stream")
