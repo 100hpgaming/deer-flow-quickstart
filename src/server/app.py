@@ -802,13 +802,27 @@ async def rag_resources(request: Annotated[RAGResourceRequest, Query()]):
     return RAGResourcesResponse(resources=[])
 
 
-@app.get("/api/config", response_model=ConfigResponse)
-async def config():
-    """Get the config of the server."""
-    return ConfigResponse(
-        rag=RAGConfigResponse(provider=SELECTED_RAG_PROVIDER),
-        models=get_configured_llm_models(),
-    )
+@app.get("/api/config")
+async def get_config() -> ConfigResponse:
+    """Get server configuration."""
+    try:
+        # Get configured LLM models
+        models = get_configured_llm_models()
+
+        # Get RAG provider
+        rag_provider = SELECTED_RAG_PROVIDER
+
+        return ConfigResponse(
+            rag=RAGConfigResponse(provider=rag_provider),
+            models=models if models else {}
+        )
+    except Exception as e:
+        logger.error(f"Error getting config: {e}")
+        # Return a minimal valid response even if there's an error
+        return ConfigResponse(
+            rag=RAGConfigResponse(provider=None),
+            models={}
+        )
 
 # Include research API routes
 app.include_router(research_router, prefix="/api/research", tags=["research"])
